@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Noir Clock & Timer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Space Grotesk', sans-serif;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .glow-text {
+            text-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+        }
+
+        .tab-active {
+            border-bottom: 2px solid white;
+            color: white;
+        }
+
+        .tab-inactive {
+            color: #4b5563;
+        }
+
+        .btn-action {
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .btn-action:active {
+            transform: scale(0.95);
+            opacity: 0.8;
+        }
+
+        /* Hide number input arrows */
+        input::-webkit-outer-spin-button,
+        input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        @keyframes pulse-white {
+            0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
+            70% { box-shadow: 0 0 0 20px rgba(255, 255, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+        }
+
+        .alarm-ringing {
+            animation: pulse-white 1.5s infinite;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+
+    <!-- Navigation Tabs -->
+    <nav class="fixed top-8 flex space-x-8 text-sm tracking-widest uppercase">
+        <button onclick="setView('clock')" id="tab-clock" class="tab-active py-2 transition-colors">Clock</button>
+        <button onclick="setView('timer')" id="tab-timer" class="tab-inactive py-2 transition-colors">Timer</button>
+        <button onclick="setView('alarm')" id="tab-alarm" class="tab-inactive py-2 transition-colors">Alarm</button>
+    </nav>
+
+    <!-- Main Display Container -->
+    <main class="w-full max-w-lg flex flex-col items-center justify-center text-center">
+        
+        <!-- View: Clock -->
+        <div id="view-clock" class="view flex flex-col items-center">
+            <h1 id="clock-display" class="text-8xl md:text-9xl font-light glow-text tracking-tighter">00:00:00</h1>
+            <p id="date-display" class="mt-4 text-gray-500 uppercase tracking-widest text-sm">Wednesday, May 24</p>
+        </div>
+
+        <!-- View: Timer -->
+        <div id="view-timer" class="view hidden flex flex-col items-center">
+            <div id="timer-display" class="text-8xl md:text-9xl font-light mb-8 glow-text">00:00</div>
+            
+            <div id="timer-setup" class="flex space-x-4 mb-8">
+                <input type="number" id="timer-min" placeholder="MM" class="bg-transparent border-b border-gray-700 text-3xl w-16 text-center focus:border-white outline-none pb-2" min="0" max="99">
+                <span class="text-3xl text-gray-700">:</span>
+                <input type="number" id="timer-sec" placeholder="SS" class="bg-transparent border-b border-gray-700 text-3xl w-16 text-center focus:border-white outline-none pb-2" min="0" max="59">
+            </div>
+
+            <div class="flex space-x-4">
+                <button id="timer-start-btn" onclick="toggleTimer()" class="btn-action glass-card px-8 py-3 rounded-full border border-white text-white hover:bg-white hover:text-black font-medium">Start</button>
+                <button onclick="resetTimer()" class="btn-action glass-card px-8 py-3 rounded-full text-gray-400 hover:text-white">Reset</button>
+            </div>
+        </div>
+
+        <!-- View: Alarm -->
+        <div id="view-alarm" class="view hidden flex flex-col items-center w-full">
+            <div class="mb-12 text-center">
+                <input type="time" id="alarm-time" class="bg-transparent text-7xl font-light text-white outline-none mb-6 cursor-pointer block mx-auto">
+                <button id="set-alarm-btn" onclick="setAlarm()" class="btn-action glass-card px-10 py-3 rounded-full border border-white text-white hover:bg-white hover:text-black font-medium">Set Alarm</button>
+            </div>
+
+            <div id="active-alarms" class="w-full space-y-4">
+                <!-- Alarms will appear here -->
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Overlay for Alarms/Timer finished -->
+    <div id="alert-overlay" class="fixed inset-0 bg-black bg-opacity-95 flex-col items-center justify-center z-50 hidden">
+        <h2 id="alert-title" class="text-4xl font-light mb-4 uppercase tracking-widest">Time's Up</h2>
+        <div class="w-24 h-24 rounded-full border-2 border-white flex items-center justify-center alarm-ringing mb-8">
+            <div class="w-12 h-12 bg-white rounded-full"></div>
+        </div>
+        <button onclick="stopAlert()" class="btn-action glass-card px-12 py-4 rounded-full border border-white text-white text-xl hover:bg-white hover:text-black">Dismiss</button>
+    </div>
+
+    <script>
+        // --- State Management ---
+        let currentView = 'clock';
+        let timerInterval = null;
+        let timerSeconds = 0;
+        let isTimerRunning = false;
+        let alarms = [];
+        let audioContext = null;
+        let buzzerInterval = null;
+
+        // --- Clock Logic ---
+        function updateClock() {
+            const now = new Date();
+            const h = String(now.getHours()).padStart(2, '0');
+            const m = String(now.getMinutes()).padStart(2, '0');
+            const s = String(now.getSeconds()).padStart(2, '0');
+            
+            document.getElementById('clock-display').innerText = `${h}:${m}:${s}`;
+            
+            const options = { weekday: 'long', month: 'long', day: 'numeric' };
+            document.getElementById('date-display').innerText = now.toLocaleDateString('en-US', options);
+
+            // Check Alarms
+            checkAlarms(h, m);
+        }
+
+        // --- View Logic ---
+        function setView(view) {
+            currentView = view;
+            document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+            document.getElementById(`view-${view}`).classList.remove('hidden');
+
+            document.querySelectorAll('nav button').forEach(b => {
+                b.classList.remove('tab-active');
+                b.classList.add('tab-inactive');
+            });
+            document.getElementById(`tab-${view}`).classList.add('tab-active');
+            document.getElementById(`tab-${view}`).classList.remove('tab-inactive');
+        }
+
+        // --- Timer Logic ---
+        function toggleTimer() {
+            if (isTimerRunning) {
+                clearInterval(timerInterval);
+                document.getElementById('timer-start-btn').innerText = 'Start';
+            } else {
+                if (timerSeconds <= 0) {
+                    const m = parseInt(document.getElementById('timer-min').value) || 0;
+                    const s = parseInt(document.getElementById('timer-sec').value) || 0;
+                    timerSeconds = (m * 60) + s;
+                }
+                
+                if (timerSeconds <= 0) return;
+
+                document.getElementById('timer-setup').classList.add('invisible');
+                document.getElementById('timer-start-btn').innerText = 'Pause';
+                
+                timerInterval = setInterval(() => {
+                    timerSeconds--;
+                    updateTimerDisplay();
+                    if (timerSeconds <= 0) {
+                        clearInterval(timerInterval);
+                        triggerAlert("Timer Finished");
+                        resetTimer();
+                    }
+                }, 1000);
+            }
+            isTimerRunning = !isTimerRunning;
+        }
+
+        function resetTimer() {
+            clearInterval(timerInterval);
+            isTimerRunning = false;
+            timerSeconds = 0;
+            document.getElementById('timer-setup').classList.remove('invisible');
+            document.getElementById('timer-start-btn').innerText = 'Start';
+            updateTimerDisplay();
+        }
+
+        function updateTimerDisplay() {
+            const m = Math.floor(timerSeconds / 60);
+            const s = timerSeconds % 60;
+            document.getElementById('timer-display').innerText = 
+                `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        }
+
+        // --- Alarm Logic ---
+        function setAlarm() {
+            const timeInput = document.getElementById('alarm-time').value;
+            if (!timeInput) return;
+
+            if (!alarms.includes(timeInput)) {
+                alarms.push(timeInput);
+                renderAlarms();
+            }
+        }
+
+        function deleteAlarm(time) {
+            alarms = alarms.filter(a => a !== time);
+            renderAlarms();
+        }
+
+        function renderAlarms() {
+            const container = document.getElementById('active-alarms');
+            container.innerHTML = '';
+            alarms.forEach(time => {
+                const div = document.createElement('div');
+                div.className = 'glass-card flex items-center justify-between p-4 rounded-2xl w-full';
+                div.innerHTML = `
+                    <span class="text-2xl font-light">${time}</span>
+                    <button onclick="deleteAlarm('${time}')" class="text-red-400 text-sm uppercase tracking-widest hover:text-red-300">Remove</button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function checkAlarms(h, m) {
+            const currentTime = `${h}:${m}`;
+            if (alarms.includes(currentTime)) {
+                triggerAlert(`Alarm: ${currentTime}`);
+                deleteAlarm(currentTime);
+            }
+        }
+
+        // --- Audio Logic (The Sweet Buzz) ---
+        function startBuzzer() {
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            const playBuzz = () => {
+                const osc = audioContext.createOscillator();
+                const gain = audioContext.createGain();
+                
+                osc.type = 'triangle'; // Smoother buzz
+                osc.frequency.setValueAtTime(440, audioContext.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(220, audioContext.currentTime + 0.5);
+                
+                gain.gain.setValueAtTime(0.1, audioContext.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                
+                osc.connect(gain);
+                gain.connect(audioContext.destination);
+                
+                osc.start();
+                osc.stop(audioContext.currentTime + 0.5);
+            };
+
+            playBuzz();
+            buzzerInterval = setInterval(playBuzz, 1000);
+        }
+
+        // --- Alert Management ---
+        function triggerAlert(title) {
+            document.getElementById('alert-title').innerText = title;
+            document.getElementById('alert-overlay').style.display = 'flex';
+            startBuzzer();
+        }
+
+        function stopAlert() {
+            document.getElementById('alert-overlay').style.display = 'none';
+            if (buzzerInterval) clearInterval(buzzerInterval);
+        }
+
+        // Initialize
+        setInterval(updateClock, 1000);
+        updateClock();
+        
+        // Default time for input
+        const now = new Date();
+        document.getElementById('alarm-time').value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    </script>
+</body>
+</html>
